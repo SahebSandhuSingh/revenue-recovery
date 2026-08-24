@@ -23,30 +23,36 @@ recoup/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                             # FastAPI entry point & CORS
-│   │   ├── constants.py                        # Single source of truth: ROOT_CAUSES & ACTION_TYPES
+│   │   ├── constants.py                        # Single source of truth: taxonomies & compliance limits
 │   │   ├── database.py                         # Engine, sessionmaker, Base, get_db
-│   │   ├── models.py                           # SQLAlchemy 2.0 ORM models (7 tables)
+│   │   ├── models.py                           # SQLAlchemy 2.0 ORM models (8 tables)
 │   │   ├── schemas.py                          # Pydantic v2 validation & response schemas
 │   │   ├── routers/
 │   │   │   ├── events.py                       # GET /events, POST /events
 │   │   │   ├── invoices.py                     # GET /invoices, POST /invoices
 │   │   │   ├── diagnosis.py                    # POST /sync/invoices-to-events, POST /diagnose/run, GET /diagnoses
-│   │   │   └── intervention.py                 # POST /route/run, GET /actions, GET /events/{id}/action
+│   │   │   ├── intervention.py                 # POST /route/run, GET /actions, GET /events/{id}/action
+│   │   │   └── promises.py                     # POST /replies/process, POST /promises/evaluate, GET /compliance
 │   │   ├── services/
 │   │   │   ├── context_builder.py              # Case context & customer history aggregation
 │   │   │   ├── diagnosis_agent.py              # GPT-4o root-cause diagnosis agent
-│   │   │   ├── intervention_agent.py           # GPT-4o intervention router agent
+│   │   │   ├── intervention_agent.py           # GPT-4o intervention router agent (compliance gated)
+│   │   │   ├── promise_agent.py                # GPT-4o reply classification & promise extraction
+│   │   │   ├── promise_evaluator.py            # Promise status evaluator (broken promise tracker)
+│   │   │   ├── compliance_service.py           # Contact caps & stopping rules engine
 │   │   │   ├── event_sync.py                   # Invoice-to-event synchronization service
 │   │   │   └── razorpay_client.py              # Razorpay client wrapper & test stubs
 │   │   └── data/
 │   │       ├── generate_synthetic_invoices.py        # 60 FMCG B2B invoice generator
-│   │       └── generate_synthetic_consumer_events.py  # 30 consumer checkout/sub/mandate events
+│   │       ├── generate_synthetic_consumer_events.py  # 30 consumer checkout/sub/mandate events
+│   │       └── generate_synthetic_customer_replies.py # Synthetic inbound customer responses
 │   ├── alembic/
 │   │   ├── env.py                              # Alembic migration environment (.env aware)
 │   │   ├── script.py.mako
 │   │   └── versions/
 │   │       ├── 0001_initial_schema.py          # Initial schema migration (7 tables)
-│   │       └── 0002_extend_actions_table.py    # Actions table schema extension
+│   │       ├── 0002_extend_actions_table.py    # Actions table schema extension
+│   │       └── 0003_add_inbound_messages.py    # Inbound messages & promise reply text
 │   ├── alembic.ini                             # Alembic configuration
 │   ├── requirements.txt                        # Python package dependencies
 │   └── .env.example                            # Environment variables template
@@ -57,11 +63,11 @@ recoup/
 
 ---
 
-## Agent Taxonomies
+## Agent Taxonomies & Compliance Guardrails
 
 ### 1. Root-Cause Taxonomy (`ROOT_CAUSES`)
-- `soft_decline`: Transient technical/network glitch (gateway timeout, bank switch down).
-- `hard_decline_or_expired`: Permanently invalid payment method (expired card, revoked mandate).
+- `soft_decline`: Transient technical/network glitch.
+- `hard_decline_or_expired`: Permanently invalid payment method.
 - `dispute`: Retailer/customer contesting charge or invoice.
 - `cash_flow_distress`: Chronic liquidity hardship (NSF, 45+ days overdue, repeated defaults).
 - `forgetfulness`: Isolated oversight with clean track record.
@@ -72,6 +78,17 @@ recoup/
 - `dispute_resolution_draft`: Tailored response addressing disputed invoices/charges (Channel: `email`).
 - `payment_plan_offer`: Flexible installment/deferred payment offer for liquidity distress (Channels: `whatsapp`, `email`).
 - `friendly_nudge`: Courteous reminder for clean-history accounts (Channels: `whatsapp`, `sms`).
+
+### 3. Customer Reply Intent (`REPLY_TYPES`)
+- `promise_to_pay`: Customer commits to settle by a date with an amount.
+- `dispute`: Customer contests delivery, pricing, or billing terms (triggers `disputed_followup_needed`).
+- `payment_made`: Customer claims transfer is already initiated.
+- `other`: Non-committal, ambiguous, or generic chatter.
+
+### 4. Compliance Stopping Rules
+- **Maximum Contacts Cap**: `MAX_CONTACTS_BEFORE_ESCALATION = 3`
+- **Broken Promise Cap**: `MAX_BROKEN_PROMISES_BEFORE_ESCALATION = 1`
+- When a customer breaches either threshold, `escalation_flag` flips to `True`, and subsequent outreach is intercepted as `blocked_pending_review`.
 
 ---
 
@@ -104,9 +121,6 @@ OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o
 ```
 
-> [!WARNING]
-> **Mock Mode Notice**: If `OPENAI_API_KEY` is not provided or left blank, the agent runs in **Mock Fallback Mode**. Reasoning is prefixed with `[MOCK]`, confidence is set to `0.0`, priority defaults to `low`, and console warnings alert you. Set `require_real_agent=true` to enforce strict failure when API keys are missing.
-
 ### 4. Run Database Migrations
 
 ```bash
@@ -122,6 +136,9 @@ python -m app.data.generate_synthetic_invoices --reset
 
 # Seed 30 Consumer Payment Failure Events
 python -m app.data.generate_synthetic_consumer_events --reset
+
+# Generate Inbound Customer Replies
+python -m app.data.generate_synthetic_customer_replies --reset
 ```
 
 ### 6. Run the FastAPI Application Server
@@ -150,23 +167,32 @@ Interactive OpenAPI docs: [http://localhost:8000/docs](http://localhost:8000/doc
 | `POST` | `/route/run` | Execute batch intervention router for diagnosed events |
 | `GET` | `/actions` | List planned actions (paginated, supports `?action_type=` & `?channel=` filters) |
 | `GET` | `/events/{event_id}/action` | Retrieve planned action for a specific event |
+| `POST` | `/replies/process` | Batch classify inbound replies and extract promises |
+| `POST` | `/promises/evaluate` | Evaluate pending promises and mark expired as broken |
+| `GET` | `/promises` | List promises (paginated, supports `?status=` filter) |
+| `GET` | `/compliance/{customer_id}` | Retrieve compliance status for a customer |
+| `GET` | `/compliance` | List compliance records (supports `?escalation_flag=` filter) |
 
 ---
 
-## Example Usage
+## Complete Pipeline Execution
 
-**1. Sync & Diagnose**:
 ```bash
+# 1. Sync overdue/disputed invoices to events
 curl -X POST http://localhost:8000/sync/invoices-to-events
+
+# 2. Run Root-Cause Diagnosis Agent
 curl -X POST http://localhost:8000/diagnose/run
-```
 
-**2. Route Interventions**:
-```bash
+# 3. Run Intervention Router Agent
 curl -X POST http://localhost:8000/route/run
-```
 
-**3. Query Planned Actions by Action Type**:
-```bash
-curl "http://localhost:8000/actions?action_type=payment_plan_offer"
+# 4. Classify Inbound Replies & Extract Promises
+curl -X POST http://localhost:8000/replies/process
+
+# 5. Evaluate Promises (detect broken promises)
+curl -X POST http://localhost:8000/promises/evaluate
+
+# 6. Check Escalated / Blocked Customers
+curl "http://localhost:8000/compliance?escalation_flag=true"
 ```

@@ -50,6 +50,9 @@ class Event(Base):
     audit_logs: Mapped[List["AuditLog"]] = relationship(
         "AuditLog", back_populates="event", cascade="all, delete-orphan"
     )
+    inbound_messages: Mapped[List["InboundMessage"]] = relationship(
+        "InboundMessage", back_populates="event", cascade="all, delete-orphan"
+    )
 
 
 class Invoice(Base):
@@ -139,11 +142,33 @@ class Promise(Base):
     )
     promised_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    raw_reply_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     event: Mapped["Event"] = relationship("Event", back_populates="promises")
+
+
+class InboundMessage(Base):
+    __tablename__ = "inbound_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("events.id", ondelete="CASCADE"),
+        index=True,
+    )
+    channel: Mapped[str] = mapped_column(String(20))
+    raw_text: Mapped[str] = mapped_column(Text)
+    reply_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    event: Mapped["Event"] = relationship("Event", back_populates="inbound_messages")
 
 
 class AuditLog(Base):

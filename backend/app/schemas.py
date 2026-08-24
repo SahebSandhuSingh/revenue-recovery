@@ -4,17 +4,25 @@ from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.constants import ACTION_TYPES, CHANNELS, PRIORITIES, ROOT_CAUSES
+from app.constants import (
+    ACTION_TYPES,
+    CHANNELS,
+    PRIORITIES,
+    PROMISE_STATUSES,
+    REPLY_TYPES,
+    ROOT_CAUSES,
+)
 
-# Literal types derived directly from constants.py (FIX 2)
+# Literal types derived directly from constants.py (FIX 2 & FIX 4)
 EventSourceType = Literal["checkout", "subscription", "mandate", "invoice"]
 InvoiceStatus = Literal["paid", "overdue", "disputed", "pending"]
-PromiseStatus = Literal["pending", "kept", "broken"]
 
 DiagnosisRootCause = Literal[tuple(ROOT_CAUSES)]
 ActionType = Literal[tuple(ACTION_TYPES)]
 Channel = Literal[tuple(CHANNELS)]
 Priority = Literal[tuple(PRIORITIES)]
+ReplyType = Literal[tuple(REPLY_TYPES)]
+PromiseStatus = Literal[tuple(PROMISE_STATUSES)]
 
 
 # --- Health Schema ---
@@ -161,3 +169,68 @@ class ActionBatchSummary(BaseModel):
     by_action_type: Dict[str, int]
     by_channel: Dict[str, int]
     failures: List[ActionBatchFailure]
+
+
+# --- Promise Schemas ---
+class PromiseResponse(BaseModel):
+    id: uuid.UUID
+    event_id: uuid.UUID
+    promised_amount: Optional[Decimal] = None
+    promised_date: Optional[date] = None
+    status: Optional[PromiseStatus] = None
+    raw_reply_text: Optional[str] = None
+    created_at: Optional[datetime] = None
+    # Joined event fields
+    source_type: Optional[str] = None
+    customer_id: Optional[str] = None
+    amount: Optional[Decimal] = None
+    currency: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginatedPromisesResponse(BaseModel):
+    items: List[PromiseResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class PromiseEvaluationSummary(BaseModel):
+    evaluated: int
+    newly_broken: int
+    still_pending: int
+
+
+# --- Reply Processing Schemas ---
+class ReplyBatchFailure(BaseModel):
+    message_id: str
+    error: str
+    retry_count: int
+
+
+class ReplyProcessingBatchSummary(BaseModel):
+    total_processed: int
+    by_reply_type: Dict[str, int]
+    promises_created: int
+    failures: List[ReplyBatchFailure]
+
+
+# --- Compliance Schemas ---
+class ComplianceStatusResponse(BaseModel):
+    id: uuid.UUID
+    customer_id: str
+    contact_count: int
+    last_contact_at: Optional[datetime] = None
+    escalation_flag: bool
+    broken_promises_count: Optional[int] = None
+    escalation_reason: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginatedComplianceResponse(BaseModel):
+    items: List[ComplianceStatusResponse]
+    total: int
+    limit: int
+    offset: int

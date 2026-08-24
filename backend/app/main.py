@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.routers import diagnosis, events, intervention, invoices
+from app.routers import diagnosis, events, intervention, invoices, promises
 from app.schemas import HealthResponse
 
 
@@ -54,3 +54,4 @@ app.include_router(events.router)
 app.include_router(invoices.router)
 app.include_router(diagnosis.router)
 app.include_router(intervention.router)
+app.include_router(promises.router)

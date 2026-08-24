@@ -23,3 +23,22 @@ CHANNELS = ["none", "email", "whatsapp", "sms", "voice"]
 
 # Intervention priorities
 PRIORITIES = ["low", "medium", "high"]
+
+# Inbound message reply types
+REPLY_TYPES = [
+    "promise_to_pay",
+    "dispute",
+    "payment_made",
+    "other",
+]
+
+# Promise-to-pay statuses
+PROMISE_STATUSES = [
+    "pending",
+    "kept",
+    "broken",
+]
+
+# Compliance & contact frequency guardrail thresholds
+MAX_CONTACTS_BEFORE_ESCALATION = 3
+MAX_BROKEN_PROMISES_BEFORE_ESCALATION = 1

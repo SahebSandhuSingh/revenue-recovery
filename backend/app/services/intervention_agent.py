@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.constants import ACTION_TYPES, CHANNELS, PRIORITIES
 from app.models import Action, AuditLog, Diagnosis, Event
+from app.services.compliance_service import is_customer_blocked, register_contact
 from app.services.context_builder import build_case_context
 from app.services.diagnosis_agent import check_mock_mode_disabled, is_mock_mode
 
@@ -153,7 +154,7 @@ def route_intervention(
     client: Optional[OpenAI] = None,
     require_real_agent: bool = False,
 ) -> Dict[str, Any]:
-    """Route and draft an intervention plan for a diagnosed event.
+    """Route and draft an intervention plan for a diagnosed event, gating via compliance limits.
 
     Args:
         event_id: Target event UUID.
@@ -176,12 +177,17 @@ def route_intervention(
             f"No diagnosis found for event {event_id}. Event must be diagnosed before routing intervention."
         )
 
-    # 2. Check if action already planned
+    # 2. Fetch parent event
+    event = db.get(Event, event_id)
+    if not event:
+        raise ValueError(f"Event {event_id} not found.")
+
+    # 3. Check if action already planned
     existing_action = db.scalar(
         select(Action).where(Action.event_id == event_id)
     )
     if existing_action:
-        logger.info(f"Event {event_id} already has a planned action: {existing_action.action_type}")
+        logger.info(f"Event {event_id} already has an action: {existing_action.action_type}")
         return {
             "id": str(existing_action.id),
             "event_id": str(existing_action.event_id),
@@ -193,7 +199,7 @@ def route_intervention(
             "created_at": existing_action.created_at.isoformat() if existing_action.created_at else None,
         }
 
-    # 3. Assemble combined context
+    # 4. Assemble combined context
     case_context = build_case_context(event_id, db)
     combined_context = {
         **case_context,
@@ -204,7 +210,7 @@ def route_intervention(
         },
     }
 
-    # 4. Generate plan via GPT-4o or Mock Fallback
+    # 5. Generate plan via GPT-4o or Mock Fallback
     if is_mock_mode():
         action_output = _generate_mock_intervention(combined_context)
     else:
@@ -263,19 +269,41 @@ def route_intervention(
         )
         channel = "email"
 
-    # 5. Persist planned action
+    # 6. Compliance Gating Layer (Part F)
+    # Check stopping rules before assigning action status
+    action_status = "planned"
+    customer_id = event.customer_id
+
+    if channel != "none":
+        if is_customer_blocked(customer_id, db):
+            action_status = "blocked_pending_review"
+            logger.warning(
+                f"Compliance Gate: Customer {customer_id} is blocked. Marking action as 'blocked_pending_review'."
+            )
+            # Write compliance gate audit entry
+            compliance_audit = AuditLog(
+                event_id=event_id,
+                agent_name="compliance_gate",
+                decision="blocked",
+                reasoning=f"Customer {customer_id} has reached escalation threshold, action held for human review",
+            )
+            db.add(compliance_audit)
+        else:
+            # Register contact attempt if customer is not blocked
+            register_contact(customer_id, db)
+
+    # 7. Persist action
     action = Action(
         event_id=event_id,
         action_type=action_type,
         channel=channel,
         priority=priority,
         message_draft=message_draft if message_draft else None,
-        status="planned",
+        status=action_status,
     )
     db.add(action)
 
-    # 6. Audit Trail Logging
-    # TODO: Compliance/stopping-rule checks against compliance_limits are NOT enforced here — that's Step 4. This agent only plans the action.
+    # 8. Audit Trail Logging for Intervention Agent
     audit_entry = AuditLog(
         event_id=event_id,
         agent_name="intervention_router_agent",
@@ -338,7 +366,7 @@ def run_intervention_batch(
     by_channel: Dict[str, int] = {ch: 0 for ch in CHANNELS}
     failures: List[Dict[str, Any]] = []
 
-    # FIX 5: Explicitly capped at max 2 retries per event (total 3 attempts)
+    # Capped at max 2 retries per event (total 3 attempts)
     max_retries = 2
 
     for idx, ev in enumerate(pending_events, start=1):
@@ -360,7 +388,7 @@ def run_intervention_batch(
                 processed_count += 1
                 success = True
                 logger.info(
-                    f"[{idx}/{total_pending}] Routed event {ev.id} -> {at} via {ch} ({res['priority']})"
+                    f"[{idx}/{total_pending}] Routed event {ev.id} -> {at} via {ch} ({res['priority']}, status={res['status']})"
                 )
                 break
             except OpenAIError as oe:
