@@ -5,7 +5,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.routers import diagnosis, events, invoices
+from app.routers import diagnosis, events, intervention, invoices
 from app.schemas import HealthResponse
 
 
@@ -53,3 +53,4 @@ def health_check(db: Session = Depends(get_db)):
 app.include_router(events.router)
 app.include_router(invoices.router)
 app.include_router(diagnosis.router)
+app.include_router(intervention.router)

@@ -4,19 +4,17 @@ from decimal import Decimal
 from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.constants import ROOT_CAUSES
+from app.constants import ACTION_TYPES, CHANNELS, PRIORITIES, ROOT_CAUSES
 
-# Literal types for validation
+# Literal types derived directly from constants.py (FIX 2)
 EventSourceType = Literal["checkout", "subscription", "mandate", "invoice"]
 InvoiceStatus = Literal["paid", "overdue", "disputed", "pending"]
 PromiseStatus = Literal["pending", "kept", "broken"]
-DiagnosisRootCause = Literal[
-    "soft_decline",
-    "hard_decline_or_expired",
-    "dispute",
-    "cash_flow_distress",
-    "forgetfulness",
-]
+
+DiagnosisRootCause = Literal[tuple(ROOT_CAUSES)]
+ActionType = Literal[tuple(ACTION_TYPES)]
+Channel = Literal[tuple(CHANNELS)]
+Priority = Literal[tuple(PRIORITIES)]
 
 
 # --- Health Schema ---
@@ -95,7 +93,7 @@ class DiagnosisResponse(BaseModel):
     id: uuid.UUID
     event_id: uuid.UUID
     root_cause: Optional[DiagnosisRootCause] = None
-    confidence: Optional[float] = Field(None, ge=0, le=1)  # FIX 2: Bounded 0-1
+    confidence: Optional[float] = Field(None, ge=0, le=1)
     reasoning: Optional[str] = None
     created_at: datetime
     # Event metadata join fields
@@ -123,4 +121,43 @@ class DiagnosisBatchFailure(BaseModel):
 class DiagnosisBatchSummary(BaseModel):
     total_processed: int
     by_root_cause: Dict[str, int]
-    failures: List[DiagnosisBatchFailure]  # FIX 3: Detailed failures list
+    failures: List[DiagnosisBatchFailure]
+
+
+# --- Intervention / Action Schemas ---
+class ActionResponse(BaseModel):
+    id: uuid.UUID
+    event_id: uuid.UUID
+    action_type: Optional[ActionType] = None
+    channel: Optional[Channel] = None
+    priority: Optional[Priority] = None
+    message_draft: Optional[str] = None
+    status: Optional[str] = "planned"
+    created_at: datetime
+    # Event metadata join fields
+    source_type: Optional[str] = None
+    customer_id: Optional[str] = None
+    amount: Optional[Decimal] = None
+    currency: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PaginatedActionsResponse(BaseModel):
+    items: List[ActionResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+class ActionBatchFailure(BaseModel):
+    event_id: str
+    error: str
+    retry_count: int
+
+
+class ActionBatchSummary(BaseModel):
+    total_processed: int
+    by_action_type: Dict[str, int]
+    by_channel: Dict[str, int]
+    failures: List[ActionBatchFailure]

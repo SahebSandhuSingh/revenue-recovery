@@ -110,10 +110,12 @@ class Action(Base):
         index=True,
     )
     action_type: Mapped[Optional[str]] = mapped_column(
-        String(100), nullable=True
+        String(100), nullable=True, index=True
     )
     channel: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    priority: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    message_draft: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[Optional[str]] = mapped_column(String(50), default="planned")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

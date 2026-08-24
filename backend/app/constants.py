@@ -8,3 +8,18 @@ ROOT_CAUSES = [
     "cash_flow_distress",       # pattern indicates genuine financial hardship, repeated delinquency
     "forgetfulness",            # isolated oversight, otherwise clean payment history
 ]
+
+# Action taxonomy for intervention router
+ACTION_TYPES = [
+    "silent_retry",                  # retry payment with no customer contact
+    "payment_method_update_request", # ask customer to update card/mandate
+    "dispute_resolution_draft",      # AI-drafted response to a dispute
+    "payment_plan_offer",            # structured installment/deferred offer
+    "friendly_nudge",                # simple reminder, low-pressure
+]
+
+# Communication channels ("none" is valid only for silent_retry)
+CHANNELS = ["none", "email", "whatsapp", "sms", "voice"]
+
+# Intervention priorities
+PRIORITIES = ["low", "medium", "high"]
