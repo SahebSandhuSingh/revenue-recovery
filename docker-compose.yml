@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: recoup_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: recoup
+      POSTGRES_PASSWORD: recoup_dev
+      POSTGRES_DB: recoup
+    ports:
+      - "5432:5432"
+    volumes:
+      - recoup_pgdata:/var/lib/postgresql/data
+
+volumes:
+  recoup_pgdata:
