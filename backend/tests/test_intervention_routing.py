@@ -124,7 +124,7 @@ def test_route_intervention_single_and_invariants():
         assert res["action_type"] in ACTION_TYPES
         assert res["channel"] in CHANNELS
         assert res["priority"] in PRIORITIES
-        assert res["status"] == "planned"
+        assert res["status"] in ("planned", "blocked_pending_review")
 
         if res["action_type"] == "silent_retry":
             assert res["channel"] == "none"

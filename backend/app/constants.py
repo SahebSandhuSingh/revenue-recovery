@@ -42,3 +42,27 @@ PROMISE_STATUSES = [
 # Compliance & contact frequency guardrail thresholds
 MAX_CONTACTS_BEFORE_ESCALATION = 3
 MAX_BROKEN_PROMISES_BEFORE_ESCALATION = 1
+
+# Action lifecycle statuses
+ACTION_STATUSES = [
+    "planned",                    # intervention planned but not yet dispatched
+    "dispatched",                 # message sent / retry initiated
+    "delivered",                  # channel confirmed delivery (simulated in Step 5)
+    "failed",                     # dispatch attempt failed
+    "blocked_pending_review",     # compliance gate blocked this action
+    "disputed_followup_needed",   # customer replied with a dispute
+]
+
+# Dispatch result codes from channel stubs
+DISPATCH_RESULTS = [
+    "success",       # channel accepted and delivered
+    "queued",        # channel accepted, delivery pending
+    "failed",        # channel rejected or errored
+]
+
+# Payment reconciliation sources
+RECONCILIATION_SOURCES = [
+    "webhook",       # real payment gateway webhook (future)
+    "manual",        # manual confirmation by ops team
+    "simulated",     # synthetic test data (Step 5)
+]

@@ -118,7 +118,14 @@ class Action(Base):
     channel: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     priority: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     message_draft: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[Optional[str]] = mapped_column(String(50), default="planned")
+    status: Mapped[Optional[str]] = mapped_column(String(50), default="planned", index=True)
+    dispatched_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    dispatch_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -143,6 +150,12 @@ class Promise(Base):
     promised_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     raw_reply_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reconciled_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reconciliation_source: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

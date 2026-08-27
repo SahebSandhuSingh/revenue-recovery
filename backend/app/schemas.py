@@ -5,15 +5,18 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.constants import (
+    ACTION_STATUSES,
     ACTION_TYPES,
     CHANNELS,
+    DISPATCH_RESULTS,
     PRIORITIES,
     PROMISE_STATUSES,
+    RECONCILIATION_SOURCES,
     REPLY_TYPES,
     ROOT_CAUSES,
 )
 
-# Literal types derived directly from constants.py (FIX 2 & FIX 4)
+# Literal types derived directly from constants.py
 EventSourceType = Literal["checkout", "subscription", "mandate", "invoice"]
 InvoiceStatus = Literal["paid", "overdue", "disputed", "pending"]
 
@@ -23,6 +26,9 @@ Channel = Literal[tuple(CHANNELS)]
 Priority = Literal[tuple(PRIORITIES)]
 ReplyType = Literal[tuple(REPLY_TYPES)]
 PromiseStatus = Literal[tuple(PROMISE_STATUSES)]
+ActionStatus = Literal[tuple(ACTION_STATUSES)]
+DispatchResult = Literal[tuple(DISPATCH_RESULTS)]
+ReconciliationSource = Literal[tuple(RECONCILIATION_SOURCES)]
 
 
 # --- Health Schema ---
@@ -141,6 +147,9 @@ class ActionResponse(BaseModel):
     priority: Optional[Priority] = None
     message_draft: Optional[str] = None
     status: Optional[str] = "planned"
+    dispatched_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
+    dispatch_error: Optional[str] = None
     created_at: datetime
     # Event metadata join fields
     source_type: Optional[str] = None
@@ -179,6 +188,8 @@ class PromiseResponse(BaseModel):
     promised_date: Optional[date] = None
     status: Optional[PromiseStatus] = None
     raw_reply_text: Optional[str] = None
+    reconciled_at: Optional[datetime] = None
+    reconciliation_source: Optional[str] = None
     created_at: Optional[datetime] = None
     # Joined event fields
     source_type: Optional[str] = None
@@ -234,3 +245,51 @@ class PaginatedComplianceResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# --- Dispatch Schemas (Step 5) ---
+class DispatchActionResponse(BaseModel):
+    action_id: str
+    event_id: Optional[str] = None
+    customer_id: Optional[str] = None
+    action_type: Optional[str] = None
+    channel: Optional[str] = None
+    status: str
+    result: str
+    error: Optional[str] = None
+    dispatched_at: Optional[str] = None
+    delivered_at: Optional[str] = None
+    simulated: bool = True
+
+
+class DispatchBatchFailure(BaseModel):
+    action_id: str
+    error: str
+
+
+class DispatchBatchSummary(BaseModel):
+    total_dispatched: int
+    by_status: Dict[str, int]
+    by_channel: Dict[str, int]
+    failures: List[DispatchBatchFailure]
+
+
+# --- Reconciliation Schemas (Step 5) ---
+class ReconcilePaymentResponse(BaseModel):
+    promise_id: str
+    event_id: str
+    status: str
+    already_reconciled: bool
+    reconciled_at: Optional[str] = None
+    source: Optional[str] = None
+    promised_amount: Optional[float] = None
+    promised_date: Optional[str] = None
+
+
+class ReconciliationBatchSummary(BaseModel):
+    total_eligible: int
+    reconciled_count: int
+    skipped_count: int
+    reconciliation_rate: float
+
+
