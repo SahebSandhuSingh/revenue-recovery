@@ -2,10 +2,18 @@
 
 This module provides simulated dispatch for all outreach channels (email, whatsapp, sms, voice).
 In production, each stub would be replaced with real integrations (e.g., SendGrid, Twilio,
-WhatsApp Business API). For Step 5, all dispatches are simulated with realistic success/failure
+WhatsApp Business API). For Step 5 & 6, all dispatches are simulated with realistic success/failure
 rates to exercise the full action lifecycle.
 
 Real dispatch integration is deferred to a future step. Do NOT attempt to send real messages here.
+
+SIMULATION LIMITATION & STATUS CONVENTION (Part 0 Fix):
+In a real production environment, silent retries would invoke payment gateway APIs (e.g., Razorpay/Stripe).
+For demo and testing purposes, silent retry outcomes are simulated probabilistically with a ~40% success
+and ~60% persistent decline weighting.
+- Simulated SUCCESS: status="sent", dispatch_status="sent", dispatched_at=now(), delivered_at=now(), dispatch_error=None
+- Simulated STILL FAILING: status="failed", dispatch_status="failed", dispatched_at=None, delivered_at=None,
+  dispatch_error="[SIMULATED OUTCOME - still failing, see code comment for limitation]"
 """
 
 import logging
@@ -79,10 +87,16 @@ def _simulate_channel_dispatch(
 def _execute_silent_retry(action: Action, event: Event) -> Dict[str, Any]:
     """Simulate a silent payment retry (no customer contact).
 
-    In production, this would call the payment gateway's retry API.
-    For Step 5, we simulate ~85% retry success.
+    Simulation convention (Part 0 Fix):
+    - Simulated SUCCESS: status="sent", dispatched_at=now(), dispatch_error=None (~40% success)
+    - Simulated STILL FAILING: status="failed", dispatched_at=None,
+      dispatch_error="[SIMULATED OUTCOME - still failing, see code comment for limitation]" (~60% failure)
+
+    Note on simulation limitation: In production, this calls the payment gateway retry API
+    (e.g., Razorpay/Stripe API). For demo/testing, outcomes are simulated probabilistically.
     """
-    succeeded = random.random() < 0.85
+    # 40% success / 60% still failing weighting matching Step 5 spec
+    succeeded = random.random() < 0.40
     if succeeded:
         logger.info(
             f"[SILENT RETRY STUB] Retry succeeded for event {event.id} "
@@ -91,18 +105,20 @@ def _execute_silent_retry(action: Action, event: Event) -> Dict[str, Any]:
         return {
             "result": "success",
             "channel": "none",
+            "dispatch_status": "sent",
             "error": None,
             "simulated": True,
         }
     else:
         logger.warning(
             f"[SILENT RETRY STUB] Retry FAILED for event {event.id} — "
-            f"payment gateway returned decline"
+            f"payment gateway returned persistent decline"
         )
         return {
             "result": "failed",
             "channel": "none",
-            "error": "Simulated: payment gateway returned persistent decline",
+            "dispatch_status": "failed",
+            "error": "[SIMULATED OUTCOME - still failing, see code comment for limitation]",
             "simulated": True,
         }
 
@@ -114,7 +130,7 @@ def dispatch_action(
     """Execute dispatch for a single planned action.
 
     Transitions the action through the lifecycle:
-        planned → dispatched → delivered (or failed)
+        planned → dispatched → delivered / sent (or failed)
 
     Blocked or already-dispatched actions are skipped.
 
@@ -141,6 +157,7 @@ def dispatch_action(
         return {
             "action_id": str(action_id),
             "status": action.status,
+            "dispatch_status": action.status,
             "channel": action.channel,
             "result": "skipped",
             "error": f"Action status is '{action.status}', not 'planned'",
@@ -165,20 +182,30 @@ def dispatch_action(
             customer_id=event.customer_id,
         )
 
-    # 3. Transition to final state
+    # 3. Transition to final state (Part 0 Fix applied)
     if dispatch_result["result"] == "success":
-        action.status = "delivered"
-        action.delivered_at = datetime.now(timezone.utc)
+        if action.action_type == "silent_retry":
+            action.status = "sent"
+            action.dispatched_at = now
+            action.delivered_at = now
+        else:
+            action.status = "delivered"
+            action.delivered_at = now
         action.dispatch_error = None
     else:
         action.status = "failed"
+        if action.action_type == "silent_retry":
+            # For silent retry failure, dispatched_at is set to None per Part 0 spec
+            action.dispatched_at = None
+            action.delivered_at = None
         action.dispatch_error = dispatch_result["error"]
 
     # 4. Audit trail
+    decision_str = f"dispatch_{dispatch_result['result']}"
     audit_entry = AuditLog(
         event_id=event.id,
         agent_name="dispatch_service",
-        decision=f"dispatch_{dispatch_result['result']}",
+        decision=decision_str,
         reasoning=(
             f"Channel {action.channel} dispatch {'succeeded' if dispatch_result['result'] == 'success' else 'failed'} "
             f"for {action.action_type} action. "
@@ -196,11 +223,78 @@ def dispatch_action(
         "action_type": action.action_type,
         "channel": action.channel,
         "status": action.status,
+        "dispatch_status": action.status,
         "result": dispatch_result["result"],
         "error": dispatch_result.get("error"),
         "dispatched_at": action.dispatched_at.isoformat() if action.dispatched_at else None,
         "delivered_at": action.delivered_at.isoformat() if action.delivered_at else None,
         "simulated": True,
+    }
+
+
+def run_silent_retries(db: Session, seed: Optional[int] = 42) -> Dict[str, Any]:
+    """Execute or re-evaluate silent retries with the ~40/60 outcome weighting (Part 0).
+
+    Args:
+        db: Database session.
+        seed: Optional random seed for reproducible demo outcomes.
+
+    Returns:
+        Dict with total_silent_retries, sent_count (recovered), failed_count (still failing), and by_status split.
+    """
+    if seed is not None:
+        random.seed(seed)
+
+    silent_actions = db.scalars(
+        select(Action)
+        .where(Action.action_type == "silent_retry")
+        .order_by(Action.created_at.asc())
+    ).all()
+
+    total = len(silent_actions)
+    sent_count = 0
+    failed_count = 0
+    now = datetime.now(timezone.utc)
+
+    for act in silent_actions:
+        event = db.get(Event, act.event_id)
+        if not event:
+            continue
+
+        res = _execute_silent_retry(act, event)
+        if res["result"] == "success":
+            act.status = "sent"
+            act.dispatched_at = now
+            act.delivered_at = now
+            act.dispatch_error = None
+            sent_count += 1
+        else:
+            act.status = "failed"
+            act.dispatched_at = None
+            act.delivered_at = None
+            act.dispatch_error = res["error"]
+            failed_count += 1
+
+        # Audit entry
+        db.add(
+            AuditLog(
+                event_id=event.id,
+                agent_name="dispatch_service",
+                decision=f"silent_retry_{res['result']}",
+                reasoning=f"Silent retry simulation: {res['result']}. {res.get('error') or 'Simulated payment recovery success'}",
+            )
+        )
+
+    db.commit()
+
+    return {
+        "total_silent_retries": total,
+        "sent_count": sent_count,
+        "failed_count": failed_count,
+        "by_status": {
+            "sent": sent_count,
+            "failed": failed_count,
+        },
     }
 
 
@@ -253,5 +347,6 @@ def run_dispatch_batch(db: Session) -> Dict[str, Any]:
         "total_dispatched": dispatched_count,
         "by_status": by_status,
         "by_channel": by_channel,
+        "by_dispatch_status": by_status,
         "failures": failures,
     }

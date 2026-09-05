@@ -16,6 +16,12 @@ from app.services.event_sync import sync_invoices_to_events
 
 logger = logging.getLogger(__name__)
 
+# Groq free tier: 30 requests/min, 8,000 tokens/min. A pacing delay between
+# real API calls in batch runs keeps bursts well under the TPM ceiling
+# (the binding constraint here, not RPM) rather than relying solely on
+# after-the-fact retry/backoff.
+PACING_DELAY_SECONDS = 3
+
 SYSTEM_PROMPT = """You are Recoup's Root-Cause Diagnosis Specialist, an expert AI agent dedicated to accurately diagnosing payment failures and revenue-at-risk events across B2B invoice cycles and consumer payment gateways.
 
 Your task is to analyze the case context, historical customer reliability patterns, and raw payment payloads to determine the true underlying root cause.
@@ -65,23 +71,23 @@ RECORD_DIAGNOSIS_TOOL = {
 
 
 def is_mock_mode() -> bool:
-    """Return True if OPENAI_API_KEY is not configured."""
-    return not os.getenv("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY", "").strip() == ""
+    """Return True if GROQ_API_KEY is not configured."""
+    return not os.getenv("GROQ_API_KEY") or os.getenv("GROQ_API_KEY", "").strip() == ""
 
 
 def check_mock_mode_disabled() -> None:
     """Raise an exception if mock mode is active (FIX 1)."""
     if is_mock_mode():
         raise RuntimeError(
-            "Mock mode is active because OPENAI_API_KEY is not set. "
+            "Mock mode is active because GROQ_API_KEY is not set. "
             "Batch execution was aborted due to require_real_agent=True."
         )
 
 
 def _generate_mock_diagnosis(context: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate an unmistakable mock diagnosis when OpenAI API key is unavailable (FIX 1)."""
+    """Generate an unmistakable mock diagnosis when Groq API key is unavailable (FIX 1)."""
     print("\n" + "=" * 60)
-    print("⚠️  MOCK MODE ACTIVE — NO REAL GPT-4O CALL WAS MADE")
+    print("⚠️  MOCK MODE ACTIVE — NO REAL GROQ CALL WAS MADE")
     print("=" * 60 + "\n")
 
     source_type = context.get("source_type")
@@ -130,12 +136,12 @@ def diagnose_event(
     db: Session,
     client: Optional[OpenAI] = None,
 ) -> Dict[str, Any]:
-    """Diagnose a single event using GPT-4o function calling or fallback mock mode.
+    """Diagnose a single event using Groq function calling or fallback mock mode.
 
     Args:
         event_id: Event UUID to diagnose.
         db: Database session.
-        client: Optional OpenAI client.
+        client: Optional Groq (OpenAI-compatible) client.
 
     Returns:
         Dict[str, Any]: Diagnosis record dictionary.
@@ -162,14 +168,17 @@ def diagnose_event(
     # 1. Build rich case context
     context = build_case_context(event_id, db)
 
-    # 2. Invoke GPT-4o or Mock Fallback
+    # 2. Invoke Groq or Mock Fallback
     if is_mock_mode():
         diag_output = _generate_mock_diagnosis(context)
     else:
         if client is None:
-            client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+            client = OpenAI(
+                api_key=os.environ["GROQ_API_KEY"],
+                base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            )
 
-        model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+        model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         serialized_context = json.dumps(context, indent=2, default=str)
 
         response = client.chat.completions.create(
@@ -188,7 +197,7 @@ def diagnose_event(
 
         choice = response.choices[0]
         if not choice.message.tool_calls:
-            raise RuntimeError(f"GPT-4o did not return tool_calls for event {event_id}")
+            raise RuntimeError(f"Groq did not return tool_calls for event {event_id}")
 
         tool_call = choice.message.tool_calls[0]
         diag_output = json.loads(tool_call.function.arguments)
@@ -249,8 +258,8 @@ def run_diagnosis_batch(
 
     Args:
         db: Database session.
-        client: Optional OpenAI client.
-        require_real_agent: If True, aborts immediately if OPENAI_API_KEY is missing.
+        client: Optional Groq (OpenAI-compatible) client.
+        require_real_agent: If True, aborts immediately if GROQ_API_KEY is missing.
 
     Returns:
         Dict[str, Any]: Batch summary with total_processed, distribution, and failures list.
@@ -294,7 +303,7 @@ def run_diagnosis_batch(
                 )
                 break
             except OpenAIError as oe:
-                last_error = f"OpenAI API error: {str(oe)}"
+                last_error = f"Groq API error: {str(oe)}"
                 logger.warning(
                     f"Attempt {attempt + 1} failed for event {ev.id}: {last_error}"
                 )
@@ -316,6 +325,11 @@ def run_diagnosis_batch(
                     "retry_count": max_retries,
                 }
             )
+
+        # Pacing: space out real API calls to stay under Groq's TPM ceiling
+        # during a burst, independent of the failure-only backoff above.
+        if not is_mock_mode() and idx < total_pending:
+            time.sleep(PACING_DELAY_SECONDS)
 
     return {
         "total_processed": processed_count,

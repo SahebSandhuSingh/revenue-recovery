@@ -4,8 +4,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from app.database import get_db
-from app.routers import diagnosis, dispatch, events, intervention, invoices, promises
+from app.routers import cases, diagnosis, dispatch, events, intervention, invoices, promises, razorpay
 from app.schemas import HealthResponse
 
 
@@ -24,7 +27,7 @@ app = FastAPI(
 # CORS middleware configuration for React / Vite dashboards
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -56,3 +59,6 @@ app.include_router(diagnosis.router)
 app.include_router(intervention.router)
 app.include_router(promises.router)
 app.include_router(dispatch.router)
+app.include_router(cases.router)
+app.include_router(razorpay.router)
+

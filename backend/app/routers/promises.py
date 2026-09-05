@@ -29,7 +29,7 @@ router = APIRouter(tags=["promises_and_compliance"])
 def process_replies_endpoint(
     require_real_agent: bool = Query(
         False,
-        description="If True, raises error when OPENAI_API_KEY is not configured.",
+        description="If True, raises error when GROQ_API_KEY is not configured.",
     ),
     db: Session = Depends(get_db),
 ):

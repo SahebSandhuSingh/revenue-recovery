@@ -48,21 +48,29 @@ ACTION_STATUSES = [
     "planned",                    # intervention planned but not yet dispatched
     "dispatched",                 # message sent / retry initiated
     "delivered",                  # channel confirmed delivery (simulated in Step 5)
-    "failed",                     # dispatch attempt failed
+    "sent",                       # silent retry successful / outreach sent (Part 0 convention)
+    "failed",                     # dispatch attempt failed / silent retry still failing
     "blocked_pending_review",     # compliance gate blocked this action
     "disputed_followup_needed",   # customer replied with a dispute
 ]
 
 # Dispatch result codes from channel stubs
 DISPATCH_RESULTS = [
-    "success",       # channel accepted and delivered
+    "success",       # channel accepted and delivered / silent retry recovered
     "queued",        # channel accepted, delivery pending
-    "failed",        # channel rejected or errored
+    "failed",        # channel rejected or errored / silent retry still failing
 ]
 
 # Payment reconciliation sources
 RECONCILIATION_SOURCES = [
-    "webhook",       # real payment gateway webhook (future)
-    "manual",        # manual confirmation by ops team
-    "simulated",     # synthetic test data (Step 5)
+    "webhook",               # real payment gateway webhook (future)
+    "manual",                # manual confirmation by ops team
+    "simulated",             # synthetic test data (Step 5)
+    "manual_demo_override",  # manual demo override (Part C)
 ]
+
+# Demo-scale threshold for exception list:
+# Condition: dispatched with no inbound_message after EXCEPTION_NO_REPLY_HOURS.
+# Note: This threshold is deliberately compressed to hours (not days) so the
+# exception list has demonstrable entries during a same-day hackathon demo.
+EXCEPTION_NO_REPLY_HOURS = 2

@@ -37,6 +37,10 @@ class Event(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
+    @property
+    def data_source(self) -> str:
+        return self.source_type
+
     # Relationships with CASCADE delete
     diagnoses: Mapped[List["Diagnosis"]] = relationship(
         "Diagnosis", back_populates="event", cascade="all, delete-orphan"
@@ -129,6 +133,10 @@ class Action(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+    @property
+    def dispatch_status(self) -> Optional[str]:
+        return self.status
 
     event: Mapped["Event"] = relationship("Event", back_populates="actions")
 

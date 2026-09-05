@@ -68,7 +68,7 @@ def test_fix2_constants_dynamic_literal_derivation():
 
 
 def test_fix3_require_real_agent_enforcement():
-    """FIX 3: Verify require_real_agent=True raises an error when OPENAI_API_KEY is not set."""
+    """FIX 3: Verify require_real_agent=True raises an error when GROQ_API_KEY is not set."""
     if is_mock_mode():
         db = SessionLocal()
         try:

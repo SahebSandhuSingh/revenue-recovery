@@ -32,3 +32,10 @@ htmlcov/
 # Database / Docker artifacts
 recoup_pgdata/
 postgres-data/
+STEPS_1_TO_5_IMPLEMENTATION.md
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+

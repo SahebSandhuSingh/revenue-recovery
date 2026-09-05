@@ -10,7 +10,8 @@ from app.schemas import (
     ReconcilePaymentResponse,
     ReconciliationBatchSummary,
 )
-from app.services.dispatch_service import dispatch_action, run_dispatch_batch
+import os
+from app.services.dispatch_service import dispatch_action, run_dispatch_batch, run_silent_retries
 from app.services.reconciliation_service import (
     reconcile_payment,
     simulate_payment_reconciliation,
@@ -24,8 +25,22 @@ router = APIRouter(tags=["dispatch_and_reconciliation"])
     response_model=DispatchBatchSummary,
     summary="Dispatch all planned actions through channel stubs",
 )
-def dispatch_batch_endpoint(db: Session = Depends(get_db)):
+def dispatch_batch_endpoint(
+    require_real_dispatch: bool = Query(
+        False,
+        description="If True, raises error when real dispatch credentials (Twilio/SMTP) are missing.",
+    ),
+    db: Session = Depends(get_db),
+):
     """Execute simulated dispatch for all planned actions."""
+    if require_real_dispatch:
+        twilio_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        smtp_host = os.getenv("SMTP_HOST")
+        if not (twilio_sid or smtp_host):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Real dispatch credentials (TWILIO_ACCOUNT_SID, SMTP_HOST) not configured.",
+            )
     try:
         summary = run_dispatch_batch(db)
         return summary
@@ -33,6 +48,28 @@ def dispatch_batch_endpoint(db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Dispatch batch failed: {str(exc)}",
+        )
+
+
+@router.post(
+    "/retry/run",
+    summary="Execute or re-evaluate silent retries with ~40/60 outcome weighting",
+)
+def retry_run_endpoint(db: Session = Depends(get_db)):
+    """Execute silent retries with ~40/60 outcome weighting."""
+    try:
+        summary = run_silent_retries(db)
+        return {
+            "total_silent_retries": summary["total_silent_retries"],
+            "simulated_successes": summary["sent_count"],
+            "simulated_still_failing": summary["failed_count"],
+            "by_dispatch_status": summary["by_status"],
+            "by_status": summary["by_status"],
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Silent retry execution failed: {str(exc)}",
         )
 
 

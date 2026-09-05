@@ -255,6 +255,7 @@ class DispatchActionResponse(BaseModel):
     action_type: Optional[str] = None
     channel: Optional[str] = None
     status: str
+    dispatch_status: Optional[str] = None
     result: str
     error: Optional[str] = None
     dispatched_at: Optional[str] = None
@@ -271,6 +272,7 @@ class DispatchBatchSummary(BaseModel):
     total_dispatched: int
     by_status: Dict[str, int]
     by_channel: Dict[str, int]
+    by_dispatch_status: Optional[Dict[str, int]] = None
     failures: List[DispatchBatchFailure]
 
 
@@ -292,4 +294,176 @@ class ReconciliationBatchSummary(BaseModel):
     skipped_count: int
     reconciliation_rate: float
 
+
+# --- Unified Case Detail Schemas (Part A) ---
+class CaseEventDetail(BaseModel):
+    id: uuid.UUID
+    source_type: str
+    data_source: str
+    source_id: str
+    customer_id: str
+    amount: float
+    currency: str
+    status: str
+    raw_payload: Dict[str, Any]
+    created_at: datetime
+
+
+class CaseDiagnosisDetail(BaseModel):
+    id: uuid.UUID
+    root_cause: Optional[DiagnosisRootCause] = None
+    confidence: Optional[float] = None
+    reasoning: Optional[str] = None
+    created_at: datetime
+
+
+class CaseActionDetail(BaseModel):
+    id: uuid.UUID
+    action_type: Optional[ActionType] = None
+    channel: Optional[Channel] = None
+    priority: Optional[Priority] = None
+    message_draft: Optional[str] = None
+    status: Optional[str] = None
+    dispatch_status: Optional[str] = None
+    dispatched_at: Optional[datetime] = None
+    delivered_at: Optional[datetime] = None
+    dispatch_error: Optional[str] = None
+    created_at: datetime
+
+
+class CasePromiseDetail(BaseModel):
+    id: uuid.UUID
+    promised_amount: Optional[float] = None
+    promised_date: Optional[date] = None
+    status: Optional[PromiseStatus] = None
+    raw_reply_text: Optional[str] = None
+    reconciled_at: Optional[datetime] = None
+    reconciliation_source: Optional[str] = None
+    created_at: datetime
+
+
+class CaseInboundMessageDetail(BaseModel):
+    id: uuid.UUID
+    channel: str
+    raw_text: str
+    reply_type: Optional[ReplyType] = None
+    received_at: datetime
+
+
+class CaseAuditLogDetail(BaseModel):
+    id: uuid.UUID
+    agent_name: str
+    decision: str
+    reasoning: str
+    timestamp: datetime
+
+
+class CaseDetailResponse(BaseModel):
+    event: CaseEventDetail
+    diagnosis: Optional[CaseDiagnosisDetail] = None
+    action: Optional[CaseActionDetail] = None
+    promise: Optional[CasePromiseDetail] = None
+    inbound_messages: List[CaseInboundMessageDetail] = []
+    audit_log: List[CaseAuditLogDetail] = []
+
+
+# --- Recovery Metrics & Summary Schemas (Part B) ---
+class RootCauseMetricItem(BaseModel):
+    count: int
+    total_amount: float
+    recovered_amount: float
+    pending_count: int
+    broken_count: int
+
+
+class ExceptionListItem(BaseModel):
+    event_id: str
+    customer_id: str
+    amount: float
+    root_cause: Optional[str] = None
+    reason: str
+
+
+class FunnelStageMetrics(BaseModel):
+    diagnosed: int
+    routed: int
+    dispatched: int
+    customer_replied: int
+    promise_made: int
+    recovered: int
+
+
+class RecoverySummaryResponse(BaseModel):
+    total_events: int
+    total_amount_at_risk: float
+    recovered_amount: float
+    overall_recovery_rate: float
+    by_root_cause: Dict[str, RootCauseMetricItem]
+    exception_list: List[ExceptionListItem]
+    funnel: FunnelStageMetrics
+
+
+# --- Case Explorer Listing Schemas (Part G) ---
+class CaseExplorerItem(BaseModel):
+    event_id: str
+    source_type: str
+    customer_id: str
+    amount: float
+    currency: str
+    status: str
+    created_at: datetime
+    root_cause: Optional[str] = None
+    confidence: Optional[float] = None
+    action_type: Optional[str] = None
+    channel: Optional[str] = None
+    action_status: Optional[str] = None
+    dispatch_status: Optional[str] = None
+    promise_status: Optional[str] = None
+    promised_amount: Optional[float] = None
+    promised_date: Optional[date] = None
+
+
+class PaginatedCasesResponse(BaseModel):
+    items: List[CaseExplorerItem]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Manual Override Schema (Part C) ---
+class MarkKeptResponse(BaseModel):
+    promise_id: str
+    event_id: str
+    status: str
+    reconciled_at: str
+    source: str
+    reasoning: str
+    message: str
+
+
+# --- Live Agent Simulation Schemas ---
+class SimulateCaseRequest(BaseModel):
+    customer_id: str
+    amount: float
+    source_type: str = "subscription"
+    currency: str = "INR"
+    scenario_title: Optional[str] = None
+    failure_reason: Optional[str] = None
+    days_overdue: Optional[int] = None
+    raw_payload: Optional[Dict[str, Any]] = None
+
+
+class SimulateCaseResponse(BaseModel):
+    event_id: str
+    customer_id: str
+    amount: float
+    currency: str
+    source_type: str
+    status: str
+    created_at: datetime
+    diagnosis: Optional[CaseDiagnosisDetail] = None
+    action: Optional[CaseActionDetail] = None
+    compliance_status: Optional[str] = None
+    audit_log: List[CaseAuditLogDetail] = []
+    message: str
 

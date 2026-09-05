@@ -12,7 +12,11 @@ from app.constants import ACTION_TYPES, CHANNELS, PRIORITIES
 from app.models import Action, AuditLog, Diagnosis, Event
 from app.services.compliance_service import is_customer_blocked, register_contact
 from app.services.context_builder import build_case_context
-from app.services.diagnosis_agent import check_mock_mode_disabled, is_mock_mode
+from app.services.diagnosis_agent import (
+    PACING_DELAY_SECONDS,
+    check_mock_mode_disabled,
+    is_mock_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,9 +99,9 @@ RECORD_INTERVENTION_TOOL = {
 def _generate_mock_intervention(
     combined_context: Dict[str, Any]
 ) -> Dict[str, Any]:
-    """Generate deterministic mock intervention plan when OpenAI API key is unavailable."""
+    """Generate deterministic mock intervention plan when Groq API key is unavailable."""
     print("\n" + "=" * 60)
-    print("⚠️  MOCK MODE ACTIVE — NO REAL GPT-4O CALL WAS MADE")
+    print("⚠️  MOCK MODE ACTIVE — NO REAL GROQ CALL WAS MADE")
     print("=" * 60 + "\n")
 
     root_cause = combined_context.get("diagnosis", {}).get("root_cause", "soft_decline")
@@ -159,8 +163,8 @@ def route_intervention(
     Args:
         event_id: Target event UUID.
         db: Database session.
-        client: Optional OpenAI client.
-        require_real_agent: If True, raises RuntimeError when OPENAI_API_KEY is unset.
+        client: Optional Groq (OpenAI-compatible) client.
+        require_real_agent: If True, raises RuntimeError when GROQ_API_KEY is unset.
 
     Returns:
         Dict[str, Any]: Action record dictionary.
@@ -210,14 +214,17 @@ def route_intervention(
         },
     }
 
-    # 5. Generate plan via GPT-4o or Mock Fallback
+    # 5. Generate plan via Groq or Mock Fallback
     if is_mock_mode():
         action_output = _generate_mock_intervention(combined_context)
     else:
         if client is None:
-            client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+            client = OpenAI(
+                api_key=os.environ["GROQ_API_KEY"],
+                base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            )
 
-        model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+        model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         serialized_context = json.dumps(combined_context, indent=2, default=str)
 
         response = client.chat.completions.create(
@@ -236,7 +243,7 @@ def route_intervention(
 
         choice = response.choices[0]
         if not choice.message.tool_calls:
-            raise RuntimeError(f"GPT-4o did not return tool_calls for event {event_id}")
+            raise RuntimeError(f"Groq did not return tool_calls for event {event_id}")
 
         tool_call = choice.message.tool_calls[0]
         action_output = json.loads(tool_call.function.arguments)
@@ -336,8 +343,8 @@ def run_intervention_batch(
 
     Args:
         db: Database session.
-        client: Optional OpenAI client.
-        require_real_agent: If True, raises error when OPENAI_API_KEY is missing.
+        client: Optional Groq (OpenAI-compatible) client.
+        require_real_agent: If True, raises error when GROQ_API_KEY is missing.
 
     Returns:
         Dict[str, Any]: Batch summary with total_processed, distribution, and failures list.
@@ -392,7 +399,7 @@ def run_intervention_batch(
                 )
                 break
             except OpenAIError as oe:
-                last_error = f"OpenAI API error: {str(oe)}"
+                last_error = f"Groq API error: {str(oe)}"
                 logger.warning(
                     f"Attempt {attempt + 1} failed for event {ev.id}: {last_error}"
                 )
@@ -414,6 +421,11 @@ def run_intervention_batch(
                     "retry_count": max_retries,
                 }
             )
+
+        # Pacing: space out real API calls to stay under Groq's TPM ceiling
+        # during a burst, independent of the failure-only backoff above.
+        if not is_mock_mode() and idx < total_pending:
+            time.sleep(PACING_DELAY_SECONDS)
 
     return {
         "total_processed": processed_count,

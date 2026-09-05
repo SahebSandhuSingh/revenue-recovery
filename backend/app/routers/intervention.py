@@ -24,7 +24,7 @@ router = APIRouter(tags=["intervention"])
 def run_batch_intervention_endpoint(
     require_real_agent: bool = Query(
         False,
-        description="If True, raises an error when OPENAI_API_KEY is not configured instead of using mock fallback.",
+        description="If True, raises an error when GROQ_API_KEY is not configured instead of using mock fallback.",
     ),
     db: Session = Depends(get_db),
 ):

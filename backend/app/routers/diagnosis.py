@@ -40,7 +40,7 @@ def sync_invoices_endpoint(db: Session = Depends(get_db)):
 def run_batch_diagnosis_endpoint(
     require_real_agent: bool = Query(
         False,
-        description="If True, raises error when OPENAI_API_KEY is not configured instead of using mock fallback.",
+        description="If True, raises error when GROQ_API_KEY is not configured instead of using mock fallback.",
     ),
     db: Session = Depends(get_db),
 ):

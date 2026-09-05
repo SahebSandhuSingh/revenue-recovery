@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.constants import REPLY_TYPES
 from app.models import Action, AuditLog, Event, InboundMessage, Promise
-from app.services.diagnosis_agent import check_mock_mode_disabled, is_mock_mode
+from app.services.diagnosis_agent import (
+    PACING_DELAY_SECONDS,
+    check_mock_mode_disabled,
+    is_mock_mode,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +73,9 @@ CLASSIFY_REPLY_TOOL = {
 def _extract_mock_reply_intent(
     raw_text: str, default_amount: Decimal, reference_date: date
 ) -> Dict[str, Any]:
-    """Deterministic mock extraction for customer reply text when OpenAI key is absent."""
+    """Deterministic mock extraction for customer reply text when Groq key is absent."""
     print("\n" + "=" * 60)
-    print("⚠️  MOCK MODE ACTIVE — NO REAL GPT-4O CALL WAS MADE")
+    print("⚠️  MOCK MODE ACTIVE — NO REAL GROQ CALL WAS MADE")
     print("=" * 60 + "\n")
 
     text_lower = raw_text.lower()
@@ -144,8 +148,8 @@ def process_inbound_reply(
     Args:
         message_id: InboundMessage UUID.
         db: Database session.
-        client: Optional OpenAI client.
-        require_real_agent: If True, raises error when OPENAI_API_KEY is not set.
+        client: Optional Groq (OpenAI-compatible) client.
+        require_real_agent: If True, raises error when GROQ_API_KEY is not set.
 
     Returns:
         Dict[str, Any]: Classification result dictionary.
@@ -165,16 +169,19 @@ def process_inbound_reply(
     ref_date = msg.received_at.date() if msg.received_at else date.today()
     default_amount = event.amount
 
-    # 1. Classify via GPT-4o or Mock Fallback
+    # 1. Classify via Groq or Mock Fallback
     if is_mock_mode():
         classification = _extract_mock_reply_intent(
             msg.raw_text, default_amount=default_amount, reference_date=ref_date
         )
     else:
         if client is None:
-            client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+            client = OpenAI(
+                api_key=os.environ["GROQ_API_KEY"],
+                base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+            )
 
-        model_name = os.getenv("OPENAI_MODEL", "gpt-4o")
+        model_name = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         prompt_content = (
             f"Case Debt Amount: {event.currency} {event.amount:,.2f}\n"
             f"Message Received Date: {ref_date.isoformat()}\n"
@@ -194,7 +201,7 @@ def process_inbound_reply(
 
         choice = response.choices[0]
         if not choice.message.tool_calls:
-            raise RuntimeError(f"GPT-4o did not return tool_calls for message {message_id}")
+            raise RuntimeError(f"Groq did not return tool_calls for message {message_id}")
 
         tool_call = choice.message.tool_calls[0]
         classification = json.loads(tool_call.function.arguments)
@@ -297,8 +304,8 @@ def run_reply_processing_batch(
 
     Args:
         db: Database session.
-        client: Optional OpenAI client.
-        require_real_agent: If True, raises error when OPENAI_API_KEY is missing.
+        client: Optional Groq (OpenAI-compatible) client.
+        require_real_agent: If True, raises error when GROQ_API_KEY is missing.
 
     Returns:
         Dict[str, Any]: Batch summary with total_processed, by_reply_type, promises_created, and failures list.
@@ -346,7 +353,7 @@ def run_reply_processing_batch(
                 )
                 break
             except OpenAIError as oe:
-                last_error = f"OpenAI API error: {str(oe)}"
+                last_error = f"Groq API error: {str(oe)}"
                 logger.warning(
                     f"Attempt {attempt + 1} failed for reply {msg.id}: {last_error}"
                 )
@@ -368,6 +375,11 @@ def run_reply_processing_batch(
                     "retry_count": max_retries,
                 }
             )
+
+        # Pacing: space out real API calls to stay under Groq's TPM ceiling
+        # during a burst, independent of the failure-only backoff above.
+        if not is_mock_mode() and idx < total_pending:
+            time.sleep(PACING_DELAY_SECONDS)
 
     return {
         "total_processed": processed_count,

@@ -13,7 +13,7 @@ if backend_dir not in sys.path:
 
 from sqlalchemy import delete, select
 from app.database import SessionLocal
-from app.models import Action, Event, InboundMessage
+from app.models import Action, Event, InboundMessage, Promise
 
 
 def generate_replies(actions_with_events: List[Any]) -> List[Dict[str, Any]]:
@@ -128,6 +128,7 @@ def seed_customer_replies(reset: bool = False):
                 return
             else:
                 print("[RESET] Deleting existing inbound messages and associated promises...")
+                db.execute(delete(Promise))
                 db.execute(delete(InboundMessage))
                 db.commit()
 
